@@ -27,15 +27,8 @@ GPIO.setup(LED_PIN, GPIO.OUT)  # Set the pin as an output
 
 received_msg = ""
 wait_response = 1
-send_interval = 5
+send_interval = 1
 
-# This is our callback function that runs when a message is received
-def on_recv(payload):
-    global received_msg
-    received_msg = payload
-    #print("From:", payload.header_from)
-    #print("Received:", payload.message)
-    #print("RSSI: {}; SNR: {}".format(payload.rssi, payload.snr))
 
 # Convert to decimal degrees
 def convert_to_decimal(degrees, direction):
@@ -73,23 +66,43 @@ def extract_gps(nmea):
     return gps
 
 
+port = '/dev/ttyUSB0'
+baud_rate = 9600
+wait_response = 1
+
+ser = serial.Serial(port, baud_rate, timeout=3)
+time.sleep(1.5)
+
+
+def write_to_serial_lora(cmd0):
+    cmd = cmd0 + '\n'
+    ser.write(cmd.encode('utf-8'))
+    t1 = datetime.now()
+    while True:
+        try:
+            res = ser.readline().decode('utf-8').strip()
+            if res=='OK':
+                break
+            else:
+                response = res
+
+            delta = datetime.now() - t1
+            if delta.seconds > wait_response:
+                break
+        except:
+            response = "no data"
+    return response
+
+
 PRESS_DATA = 0.0
 TEMP_DATA = 0.0
 u8Buf=[0,0,0]
-
-lora = LoRa(spi_channel=1, interrupt_pin=25, my_address=2, spi_port = 0, reset_pin=22, freq=915, tx_power=14,
-      modem_config=ModemConfig.Bw125Cr45Sf128, acks=False, crypto=None)
-lora.on_recv = on_recv
-#lora.set_mode_rx()
-
 
 GPS_BAUD = 9600
 GPS = serial.Serial('/dev/serial0', GPS_BAUD, timeout=1)
 
 shtc3 = sh.SHTC3(sh.sbc, 1, sh.SHTC3_I2C_ADDRESS)
-
 lps22hb = lp.LPS22HB()
-
 icm20948 = ic.ICM20948()
 icm20948.icm20948_Gyro_Accel_Read()
 icm20948.icm20948MagRead()
@@ -155,29 +168,31 @@ while True:
             print(message)
             print(monitor)
             logging.info(message)
-            lora.send(message.encode('utf-8'),255)
+            res = write_to_serial_lora('AT+DATA=ffffff:' + message)
             print()
 
             t1 = datetime.now()
             while True:
-                if received_msg != "":
+                if ser.in_waiting > 0:
                     try:
-                        vals = received_msg.message.decode('utf-8')
-                        print('received msg: ', vals)
+                        msg0= ser.readline()
+                        msg = msg0.decode('utf-8').strip()
+                        if 'RECV:' in msg:
+                            vals = msg.split(':')[3]
+                            print('received msg: ', vals)
 
-                        if 'OK' in vals:
-                            logging.info('OK: ' + message)
-                            for i in range(3):
-                                GPIO.output(LED_PIN, GPIO.HIGH)
-                                time.sleep(0.1)
+                            if 'OK' in vals:
+                                logging.info('OK: ' + message)
+                                for i in range(3):
+                                    GPIO.output(LED_PIN, GPIO.HIGH)
+                                    time.sleep(0.1)
 
-                                GPIO.output(LED_PIN, GPIO.LOW)
-                                time.sleep(0.1)
+                                    GPIO.output(LED_PIN, GPIO.LOW)
+                                    time.sleep(0.1)
+                            break
                     except:
-                        logging.warning(received_msg.message)
-
-                    received_msg = ""
-                    break
+                        logging.warning(msg0)
+                        pass
                 delta = datetime.now() - t1
                 if delta.seconds > wait_response:
                     break
